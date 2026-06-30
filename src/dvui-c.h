@@ -47,6 +47,18 @@ int dvui_macos_font_path_for_codepoint(
     char *out,
     size_t out_len
 );
+int dvui_macos_font_identity_for_codepoint(
+    uint32_t codepoint,
+    const char *family,
+    size_t family_len,
+    int bold,
+    int italic,
+    // char *out,
+    // size_t out_len
+    char *out_path,
+    size_t out_path_len,
+    uint32_t *out_face_index
+);
 #endif
 
 #if defined(_WIN32) && defined(DVUI_USE_FREETYPE)

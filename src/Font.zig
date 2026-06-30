@@ -25,6 +25,17 @@ const impl: enum { FreeType, STB } = if (dvui.useFreeType) .FreeType else .STB;
 pub const Error = error{FontError};
 pub const NAME_MAX_LEN = 50;
 
+extern fn dvui_macos_font_identity_for_codepoint(
+    codepoint: u32,
+    family: ?[*]const u8,
+    family_len: usize,
+    bold: c_int,
+    italic: c_int,
+    out_path: [*:0]u8,
+    out_path_len: usize,
+    out_face_index: *u32,
+) c_int;
+
 pub fn array(s: []const u8) [NAME_MAX_LEN:0]u8 {
     var v: [NAME_MAX_LEN:0]u8 = @splat(0);
     @memcpy(v[0..s.len], s);
@@ -468,6 +479,7 @@ pub const Cache = struct {
             face: c.FT_Face,
             // path: [:0]u8,
             key: []const u8,
+            face_index: usize,
             owned_path: ?[:0]u8 = null,
             backing_bytes: ?[]const u8 = null,
         };
@@ -486,7 +498,8 @@ pub const Cache = struct {
             bytes: []const u8,
         ) (std.mem.Allocator.Error || Error)!usize {
             for (self.fallback_faces.items, 0..) |fb, i| {
-                if (std.mem.eql(u8, fb.key, key)) {
+                // if (std.mem.eql(u8, fb.key, key)) {
+                if (std.mem.eql(u8, fb.key, key) and fb.face_index == 0) {
                     return i + 1;
                 }
             }
@@ -509,16 +522,65 @@ pub const Cache = struct {
             try self.fallback_faces.append(gpa, .{
                 .face = face,
                 .key = try gpa.dupe(u8, key),
+                .face_index = 0,
                 .owned_path = null,
                 .backing_bytes = bytes,
             });
             return self.fallback_faces.items.len;
         }
 
-        fn fallbackFaceFromPath(self: *Entry, gpa: std.mem.Allocator, path_z: []const u8) (std.mem.Allocator.Error || Error)!usize {
+        // fn fallbackFaceFromPath(self: *Entry, gpa: std.mem.Allocator, path_z: []const u8) (std.mem.Allocator.Error || Error)!usize {
+        // fn fallbackFaceFromPath(
+        //     self: *Entry,
+        //     gpa: std.mem.Allocator,
+        //     path_z: []const u8,
+        //     face_index: usize,
+        // ) (std.mem.Allocator.Error || Error)!usize {
+        //     for (self.fallback_faces.items, 0..) |fb, i| {
+        //         // if (std.mem.eql(u8, fb.path, path_z)) {
+        //         // if (std.mem.eql(u8, fb.key, path_z)) {
+        //         if (std.mem.eql(u8, fb.key, path_z) and fb.face_index == face_index) {
+        //             return i + 1;
+        //         }
+        //     }
+
+        //     const owned_path = try gpa.dupeZ(u8, path_z);
+        //     errdefer gpa.free(owned_path);
+
+        //     var face: c.FT_Face = undefined;
+        //     // FreeType.intToError(c.FT_New_Face(dvui.ft2lib, owned_path.ptr, 0, &face)) catch |err| {
+        //     //     dvui.log.warn("fallbackFaceForCodepoint freetype error {any} trying to FT_New_Face path {s}\n", .{ err, owned_path });
+        //     FreeType.intToError(c.FT_New_Face(dvui.ft2lib, owned_path.ptr, @as(c_long, @intCast(face_index)), &face)) catch |err| {
+        //         dvui.log.warn("fallbackFaceForCodepoint freetype error {any} trying to FT_New_Face path {s} index {d}\n", .{ err, owned_path, face_index });
+        //         return Error.FontError;
+        //     };
+        //     errdefer _ = c.FT_Done_Face(face);
+
+        //     FreeType.intToError(c.FT_Set_Pixel_Sizes(face, self.pixel_size, self.pixel_size)) catch |err| {
+        //         // dvui.log.warn("fallbackFaceForCodepoint freetype error {any} trying to FT_Set_Pixel_Sizes path {s}\n", .{ err, owned_path });
+        //         dvui.log.warn("fallbackFaceForCodepoint freetype error {any} trying to FT_Set_Pixel_Sizes path {s} index {d}\n", .{ err, owned_path, face_index });
+        //         return Error.FontError;
+        //     };
+
+        //     try self.fallback_faces.append(gpa, .{
+        //         .face = face,
+        //         // .path = owned_path,
+        //         .key = owned_path,
+        //         .face_index = face_index,
+        //         .owned_path = owned_path,
+        //         .backing_bytes = null,
+        //     });
+
+        //     return self.fallback_faces.items.len;
+        // }
+        fn fallbackFaceFromPath(
+            self: *Entry,
+            gpa: std.mem.Allocator,
+            path_z: []const u8,
+            face_index: usize,
+        ) (std.mem.Allocator.Error || Error)!usize {
             for (self.fallback_faces.items, 0..) |fb, i| {
-                // if (std.mem.eql(u8, fb.path, path_z)) {
-                if (std.mem.eql(u8, fb.key, path_z)) {
+                if (std.mem.eql(u8, fb.key, path_z) and fb.face_index == face_index) {
                     return i + 1;
                 }
             }
@@ -527,21 +589,61 @@ pub const Cache = struct {
             errdefer gpa.free(owned_path);
 
             var face: c.FT_Face = undefined;
-            FreeType.intToError(c.FT_New_Face(dvui.ft2lib, owned_path.ptr, 0, &face)) catch |err| {
-                dvui.log.warn("fallbackFaceForCodepoint freetype error {any} trying to FT_New_Face path {s}\n", .{ err, owned_path });
+            FreeType.intToError(c.FT_New_Face(dvui.ft2lib, owned_path.ptr, @as(c_long, @intCast(face_index)), &face)) catch |err| {
+                dvui.log.warn("fallbackFaceForCodepoint freetype error {any} trying to FT_New_Face path {s} index {d}\n", .{ err, owned_path, face_index });
                 return Error.FontError;
             };
             errdefer _ = c.FT_Done_Face(face);
 
-            FreeType.intToError(c.FT_Set_Pixel_Sizes(face, self.pixel_size, self.pixel_size)) catch |err| {
-                dvui.log.warn("fallbackFaceForCodepoint freetype error {any} trying to FT_Set_Pixel_Sizes path {s}\n", .{ err, owned_path });
-                return Error.FontError;
+            FreeType.intToError(c.FT_Set_Pixel_Sizes(face, self.pixel_size, self.pixel_size)) catch |err| switch (err) {
+                error.InvalidPixelSize => {
+                    if (face.*.num_fixed_sizes <= 0) {
+                        dvui.log.warn(
+                            "fallbackFaceForCodepoint freetype error {any} trying to FT_Set_Pixel_Sizes path {s} index {d} with no fixed sizes\n",
+                            .{ err, owned_path, face_index },
+                        );
+                        return Error.FontError;
+                    }
+
+                    const target = self.pixel_size;
+                    var best_idx: usize = 0;
+                    var best_score: u32 = std.math.maxInt(u32);
+
+                    var i: usize = 0;
+                    while (i < @as(usize, @intCast(face.*.num_fixed_sizes))) : (i += 1) {
+                        const sz = face.*.available_sizes[i];
+
+                        const y_ppem_26_6: u32 = @intCast(sz.y_ppem);
+                        const y_px: u32 = if (y_ppem_26_6 != 0)
+                            @max(1, y_ppem_26_6 / 64)
+                        else
+                            @max(1, @as(u32, @intCast(sz.height)));
+
+                        const score = if (y_px > target) y_px - target else target - y_px;
+                        if (score < best_score) {
+                            best_score = score;
+                            best_idx = i;
+                        }
+                    }
+
+                    FreeType.intToError(c.FT_Select_Size(face, @as(c_int, @intCast(best_idx)))) catch |select_err| {
+                        dvui.log.warn(
+                            "fallbackFaceForCodepoint freetype error {any} trying to FT_Select_Size path {s} index {d} strike {d}\n",
+                            .{ select_err, owned_path, face_index, best_idx },
+                        );
+                        return Error.FontError;
+                    };
+                },
+                else => {
+                    dvui.log.warn("fallbackFaceForCodepoint freetype error {any} trying to FT_Set_Pixel_Sizes path {s} index {d}\n", .{ err, owned_path, face_index });
+                    return Error.FontError;
+                },
             };
 
             try self.fallback_faces.append(gpa, .{
                 .face = face,
-                // .path = owned_path,
                 .key = owned_path,
+                .face_index = face_index,
                 .owned_path = owned_path,
                 .backing_bytes = null,
             });
@@ -554,16 +656,16 @@ pub const Cache = struct {
 
             if (impl != .FreeType) return null;
 
-            if (isLikelyEmoji(codepoint)) {
-                return self.fallbackFaceFromBytes(
-                    gpa,
-                    "embedded:NotoEmoji-Regular.ttf",
-                    @embedFile("fonts/NotoEmoji/NotoEmoji-Regular.ttf"),
-                ) catch |err| switch (err) {
-                    Error.FontError => null,
-                    else => |e| e,
-                };
-            }
+            // if (isLikelyEmoji(codepoint)) {
+            //     return self.fallbackFaceFromBytes(
+            //         gpa,
+            //         "embedded:NotoEmoji-Regular.ttf",
+            //         @embedFile("fonts/NotoEmoji/NotoEmoji-Regular.ttf"),
+            //     ) catch |err| switch (err) {
+            //         Error.FontError => null,
+            //         else => |e| e,
+            //     };
+            // }
 
             return switch (builtin.os.tag) {
                 .macos => try self.fallbackFaceForCodepointMacOS(gpa, codepoint),
@@ -575,8 +677,9 @@ pub const Cache = struct {
 
         fn fallbackFaceForCodepointMacOS(self: *Entry, gpa: std.mem.Allocator, codepoint: u32) (std.mem.Allocator.Error || Error)!?usize {
             var path_buf: [std.fs.max_path_bytes:0]u8 = @splat(0);
-
-            const ok = c.dvui_macos_font_path_for_codepoint(
+            var face_index: u32 = 0;
+            // const ok = c.dvui_macos_font_path_for_codepoint(
+            const ok = c.dvui_macos_font_identity_for_codepoint(
                 codepoint,
                 null,
                 0,
@@ -584,12 +687,14 @@ pub const Cache = struct {
                 0,
                 &path_buf,
                 path_buf.len,
+                &face_index,
             );
 
             if (ok == 0) return null;
 
             const path_z = std.mem.sliceTo(&path_buf, 0);
-            return try self.fallbackFaceFromPath(gpa, path_z);
+            // return try self.fallbackFaceFromPath(gpa, path_z);
+            return try self.fallbackFaceFromPath(gpa, path_z, face_index);
         }
 
         fn fallbackFaceForCodepointWindows(self: *Entry, gpa: std.mem.Allocator, codepoint: u32) (std.mem.Allocator.Error || Error)!?usize {
